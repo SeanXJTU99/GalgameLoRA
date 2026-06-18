@@ -1,0 +1,9 @@
+venv/
+*.key
+*.tar.gz
+sessions/
+results/
+splitted/
+__pycache__/
+*.pyc
+.DS_Store

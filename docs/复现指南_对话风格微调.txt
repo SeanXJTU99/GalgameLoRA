@@ -1,0 +1,434 @@
+══════════════════════════════════════════════════════════════
+  微信聊天风格 LoRA 微调 — 完整复现指南
+  最后更新: 2026-06-18
+══════════════════════════════════════════════════════════════
+
+本指南面向零基础读者，覆盖从原始聊天记录到可推理模型的完整流程。
+
+══════════════════════════════════════════════════════════════
+一、总览：整个项目做了什么？
+══════════════════════════════════════════════════════════════
+
+  354 张微信长截图 → 结构化 JSON → ShareGPT 训练数据 → LoRA 微调 → 能模仿"阿狸"聊天的模型
+
+  核心挑战：让 AI 学会一个人的聊天风格（撒娇、短回复、特定语气），
+  而不是让它背下对话内容。
+
+  ╔═══════════════════════════════════════════════════════════╗
+  ║  关键发现：训练用泛用短 prompt，推理时注入人格化长 prompt  ║
+  ║  训练 → "你正在微信上与朋友聊天。"（12 字）                ║
+  ║  推理 → "你是阿狸，爱撒娇的女生，在和男朋友聊天。"（60 字）║
+  ╚═══════════════════════════════════════════════════════════╝
+
+══════════════════════════════════════════════════════════════
+二、文件地图：每个文件是干什么的？
+══════════════════════════════════════════════════════════════
+
+  【数据管道】
+  E:\狸喵galgame\
+    ├── build_lora_data.py          ← ★ 当前使用的数据构建脚本
+    ├── build_lora_data_v2.py       ← 废弃（人格化 prompt 实验，导致退化）
+    ├── personas.json               ← 角色设定（v2 产物，v1 不用）
+    ├── extract_all.py              ← 截图 → JSON 提取脚本（已跑完，无需重跑）
+    │
+    ├── sessions/                   ← 354 个原始聊天 JSON（中间产物）
+    │     └── *.json                ← 每个包含 messages 数组
+    │
+    ├── lora_data/                  ← ★ 最终训练数据（上传到云端）
+    │     ├── train.json            ← 训练集 ~4,592 条
+    │     ├── valid.json            ← 验证集 ~1,148 条
+    │     └── dataset_info.json     ← LLaMA-Factory 数据集注册配置
+    │
+    └── galgame/
+          ├── venv/                 ← Python 3.11 虚拟环境
+          ├── split_v2.py           ← 长截图切片工具（备用）
+          └── CLAUDE.md             ← 项目开发文档
+
+  【训练脚本】
+  E:\狸喵galgame\
+    ├── colab_lora_train.ipynb      ← ★ Colab T4 训练 Notebook（3B）
+    ├── test_lora_batch.py          ← ★ AutoDL 批量推理测试脚本
+    ├── test_lora_7b.py             ← AutoDL 交互式测试（有终端输入 bug）
+    ├── LORA_TRAINING_GUIDE.md      ← ★ 训练部署详细指南
+    ├── AutoDL_LINUX_NOTES.md       ← Linux/AutoDL 操作笔记
+    └── TRAINING_LOG_v1.md          ← 训练日志（v1 3B + v3 7B）
+
+  【已训练权重】
+  E:\狸喵galgame\chat_style_lora_7b_v1\
+    ├── adapter_model.safetensors   ← LoRA 权重（~40MB）
+    └── adapter_config.json         ← LoRA 配置
+
+══════════════════════════════════════════════════════════════
+三、数据从哪里来？
+══════════════════════════════════════════════════════════════
+
+  原始数据：354 张超长竖屏微信聊天截图（JPG），分散在 ~56 个分类文件夹中
+
+  处理流程（已跑完，无需重跑）：
+    1. split_v2.py        → 超长截图切成小段
+    2. extract_all.py      → Kimi Vision API 提取文字 → sessions/*.json
+    3. build_lora_data.py  → sessions → turns → 话题分割 → lora_data/
+
+  中间产物 sessions/ 格式：
+  ┌─────────────────────────────────────────────────────────┐
+  │ {                                                        │
+  │   "category": "0107道士下山",                             │
+  │   "source_image": "20220107_122955.jpg",                 │
+  │   "messages": [                                          │
+  │     {"sender": "me", "text": "在干嘛", "time": "12:29"},  │
+  │     {"sender": "them", "text": "想你", "time": "12:30"}   │
+  │   ]                                                      │
+  │ }                                                        │
+  └─────────────────────────────────────────────────────────┘
+  - "me" = 喵喵（男朋友，作为 human 输入）
+  - "them" = 阿狸/河狸（女朋友，作为 gpt 学习目标）
+
+  角色映射：
+    me (喵喵)     → human  → 对话上文
+    them (阿狸)   → gpt    → 模型要学习模仿的回复
+
+══════════════════════════════════════════════════════════════
+四、如何构建训练数据？
+══════════════════════════════════════════════════════════════
+
+  前提：sessions/ 目录已有 354 个 JSON 文件。
+
+  运行命令：
+    cd E:\狸喵galgame
+    ./galgame/venv/Scripts/python build_lora_data.py
+
+  输出文件（均在 lora_data/ 下）：
+    - train.json        ← 训练集
+    - valid.json        ← 验证集
+    - stats.json        ← 统计信息
+    - dataset_info.json ← 保持不变（手动维护）
+
+  构建管道四步：
+    Step 1 — TXT emotion 修正：18 个 session 有手工黄金标注，覆盖 API 的粗糙标注
+    Step 2 — Turn 构建：同一人的连续消息合并为一个 turn
+    Step 3 — 话题分割：两次回复间隔 > 30 分钟则切分为新话题
+    Step 4 — ShareGPT 输出：为每个 them 回复构造 (上文 human+gpt 交替) → 目标 gpt 的训练对
+
+  关键参数（在 build_lora_data.py 顶部）：
+    TIME_GAP_MINUTES = 30    # 话题分割阈值，超过此间隔切分
+    CONTEXT_TURNS = 10       # 每条样本的上下文窗口（最近 10 轮对话）
+    TRAIN_RATIO = 0.8        # 训练/验证集比例（按日期排序后切分）
+
+  输出格式（ShareGPT）：
+  ┌─────────────────────────────────────────────────────────┐
+  │ [{                                                       │
+  │   "source": "0107道士下山/20220107_122955.jpg",           │
+  │   "conversations": [                                     │
+  │     {"from": "system", "value": "你正在微信上与朋友聊天。"},│
+  │     {"from": "human", "value": "在干嘛"},                 │
+  │     {"from": "gpt",   "value": "想你呀"},                 │
+  │     {"from": "human", "value": "今天天气不错"},           │
+  │     {"from": "gpt",   "value": "那你带我出去玩"}  ← 目标  │
+  │   ]                                                      │
+  │ }]                                                       │
+  └─────────────────────────────────────────────────────────┘
+
+  ★ 重要规则：
+    - system 后面第一条必须是 human（不能是 gpt）
+    - LLaMA-Factory v0.9+ 会自动丢弃不满足此规则的样本
+    - build_lora_data.py 已内置 first_me 过滤逻辑，自动跳过无效块
+
+  统计（当前版本）：
+    训练样本: 4,592 条
+    验证样本: 1,148 条
+    平均对话长度: ~8 轮
+
+══════════════════════════════════════════════════════════════
+五、如何注册数据集？
+══════════════════════════════════════════════════════════════
+
+  dataset_info.json 内容（已生成，位于 lora_data/ 下）：
+  ┌─────────────────────────────────────────────────────────┐
+  │ {                                                        │
+  │   "chat_style_train": {                                  │
+  │     "file_name": "train.json",                           │
+  │     "formatting": "sharegpt",                            │
+  │     "columns": {"messages": "conversations"},            │
+  │     "tags": {                                            │
+  │       "role_tag": "from",                                │
+  │       "content_tag": "value",                            │
+  │       "user_tag": "human",                               │
+  │       "assistant_tag": "gpt",                            │
+  │       "system_tag": "system"                             │
+  │     }                                                    │
+  │   },                                                     │
+  │   "chat_style_valid": { ... }                            │
+  │ }                                                        │
+  └─────────────────────────────────────────────────────────┘
+
+  部署到云端时的差异：
+    本地                       → 云端
+    "file_name": "train.json"  → "file_name": "/root/data/train.json" (AutoDL)
+                               → "file_name": "/content/data/train.json" (Colab)
+
+  ★ 常见错误：
+    - 把 system 写成 columns.system → 报错，必须用 tags.system_tag
+    - 逗号/括号不匹配 → JSON 解析失败，llamafactory-cli 提示 "No dataset named..."
+    - file_name 路径写错 → 数据集加载为空
+
+  ★ 验证数据是否正确注册：
+    训练启动后看日志第一行 "Num examples"，如果显示 ≥4000 说明正常；
+    如果只有几百，说明 dataset_info.json 有问题或数据文件路径不对。
+
+══════════════════════════════════════════════════════════════
+六、训练参数怎么设置？
+══════════════════════════════════════════════════════════════
+
+  【方案 A】Colab 免费 T4（3B 模型）
+
+  训练命令（在 colab_lora_train.ipynb Step 4）：
+  ┌─────────────────────────────────────────────────────────┐
+  │ llamafactory-cli train \                                 │
+  │   --model_name_or_path Qwen/Qwen2.5-3B-Instruct \        │
+  │   --dataset chat_style_train \                           │
+  │   --eval_dataset chat_style_valid \                      │
+  │   --output_dir /content/output/chat_style_lora \         │
+  │   --stage sft \                                          │
+  │   --do_train --do_eval \                                 │
+  │   --finetuning_type lora \                               │
+  │   --template qwen \              ← Qwen 家族必须         │
+  │   --lora_rank 8 \                ← rank 低学风格足够     │
+  │   --lora_target all \                                    │
+  │   --per_device_train_batch_size 2 \                      │
+  │   --gradient_accumulation_steps 8 \   → 有效 batch=16    │
+  │   --learning_rate 5e-5 \                                 │
+  │   --num_train_epochs 2 \                                 │
+  │   --lr_scheduler_type cosine \                           │
+  │   --warmup_ratio 0.1 \                                   │
+  │   --cutoff_len 1024 \                                    │
+  │   --logging_steps 50 \                                   │
+  │   --save_steps 500 --eval_steps 500 \                    │
+  │   --fp16 \                       ← T4 不支持 BF16       │
+  │   --overwrite_output_dir                                 │
+  └─────────────────────────────────────────────────────────┘
+
+  硬件消耗：
+    模型: Qwen2.5-3B-Instruct (~6GB 下载)
+    显存: ~10GB / T4 16GB
+    速度: ~6.4s/step
+    步数: 574 (287/epoch × 2)
+    耗时: ~1 小时
+    费用: ¥0
+
+  ─────────────────────────────────────────────────────────
+
+  【方案 B】AutoDL 4090D（7B 模型）
+
+  训练命令：
+  ┌─────────────────────────────────────────────────────────┐
+  │ llamafactory-cli train \                                 │
+  │   --model_name_or_path /root/autodl-tmp/models/Qwen2.5-7B-Instruct \  │
+  │   --dataset chat_style_train \                           │
+  │   --output_dir /root/autodl-tmp/output/chat_style_lora \ │
+  │   --stage sft \                                          │
+  │   --do_train \                                           │
+  │   --finetuning_type lora \                               │
+  │   --template qwen \              ← 必须                  │
+  │   --lora_rank 8 \                                        │
+  │   --lora_target all \                                    │
+  │   --per_device_train_batch_size 1 \  → 7B 显存紧张       │
+  │   --gradient_accumulation_steps 8 \   → 有效 batch=8     │
+  │   --learning_rate 5e-5 \                                 │
+  │   --num_train_epochs 2 \                                 │
+  │   --lr_scheduler_type cosine \                           │
+  │   --warmup_ratio 0.1 \                                   │
+  │   --cutoff_len 1024 \                                    │
+  │   --logging_steps 50 \                                   │
+  │   --save_steps 500 \                                     │
+  │   --bf16 \                       ← 4090D 原生 BF16      │
+  │   --overwrite_output_dir                                 │
+  └─────────────────────────────────────────────────────────┘
+
+  硬件消耗：
+    模型: Qwen2.5-7B-Instruct (~14GB 下载)
+    显存: ~22GB / 4090D 24GB
+    速度: ~1.9s/step
+    步数: 1,148 (574/epoch × 2)
+    耗时: ~37 分钟
+    费用: ≈¥2-3
+
+  ★ 7B 去掉了 --do_eval 和 --eval_dataset（省显存，24GB 刚好够）
+  ★ 如果有 bitsandbytes 可加 --quantization_bit 4 降低显存
+
+  ─────────────────────────────────────────────────────────
+
+  参数速查表：
+  ┌──────────────────────────┬────────────┬────────────┬──────────────────┐
+  │ 参数                     │ 3B         │ 7B         │ 说明             │
+  ├──────────────────────────┼────────────┼────────────┼──────────────────┤
+  │ --template qwen          │ ✅         │ ✅         │ Qwen 家族必须    │
+  │ --lora_rank              │ 8          │ 8          │ 5K 样本 rank=8 够│
+  │ --num_train_epochs       │ 2          │ 2          │ 不过拟合         │
+  │ --batch_size             │ 2          │ 1          │ 7B 显存更紧      │
+  │ --grad_accumulation      │ 8          │ 8          │ 有效 batch 16/8  │
+  │ --learning_rate          │ 5e-5       │ 5e-5       │ cosine decay     │
+  │ --fp16 / --bf16          │ fp16       │ bf16       │ T4/4090D 适配    │
+  │ --quantization_bit 4     │ 不需要     │ 建议       │ 有 bitsandbytes 时│
+  │ --do_eval                │ ✅         │ ❌         │ 7B 省显存        │
+  └──────────────────────────┴────────────┴────────────┴──────────────────┘
+
+  训练前快速验证（可选但推荐）：
+    加 --max_steps 10 跑 10 步验证数据正确解析，确认 Num examples ≥ 4000
+
+══════════════════════════════════════════════════════════════
+七、训练完如何推理？
+══════════════════════════════════════════════════════════════
+
+  【方案 A】本地推理（有 GPU）
+
+  推理脚本：test_lora_batch.py（复制到本地修改路径即可）
+
+  核心代码：
+  ┌─────────────────────────────────────────────────────────┐
+  │ import torch                                             │
+  │ from transformers import AutoModelForCausalLM, AutoTokenizer │
+  │ from peft import PeftModel                               │
+  │                                                          │
+  │ BASE_MODEL = "Qwen/Qwen2.5-3B-Instruct"   # 或 7B       │
+  │ LORA_PATH = "./chat_style_lora_7b_v1"     # LoRA 权重目录│
+  │                                                          │
+  │ # 加载基座模型 + LoRA 权重                               │
+  │ tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)    │
+  │ model = AutoModelForCausalLM.from_pretrained(            │
+  │     BASE_MODEL,                                          │
+  │     torch_dtype=torch.bfloat16,    # 3B 用 float16       │
+  │     device_map="auto"                                    │
+  │ )                                                        │
+  │ model = PeftModel.from_pretrained(model, LORA_PATH)      │
+  │                                                          │
+  │ # ★ 推理时用人格化 system prompt                         │
+  │ SYSTEM_PROMPT = "你是阿狸，一个爱撒娇、喜欢黏着喵喵的女生。│
+  │                 你正在和男朋友喵喵微信聊天。回复短小精炼，  │
+  │                 爱撒娇。"                                 │
+  │                                                          │
+  │ def chat(user_input):                                    │
+  │     text = (                                             │
+  │         f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"│
+  │         f"<|im_start|>user\n{user_input}<|im_end|>\n"    │
+  │         f"<|im_start|>assistant\n"                       │
+  │     )                                                    │
+  │     inputs = tokenizer(text, return_tensors="pt").to(model.device) │
+  │     outputs = model.generate(                            │
+  │         **inputs,                                        │
+  │         max_new_tokens=128,                              │
+  │         temperature=0.8,                                 │
+  │         do_sample=True,                                  │
+  │         top_p=0.9,                                       │
+  │         pad_token_id=tokenizer.eos_token_id              │
+  │     )                                                    │
+  │     return tokenizer.decode(                             │
+  │         outputs[0][len(inputs[0]):],                     │
+  │         skip_special_tokens=True                         │
+  │     ).strip()                                            │
+  └─────────────────────────────────────────────────────────┘
+
+  推理参数说明：
+    temperature=0.8  → 较高温度增加多样性（聊天需要灵活，不需要确定性）
+    top_p=0.9        → nucleus sampling
+    max_new_tokens=128 → 限制回复长度（微信聊天通常短）
+
+  ─────────────────────────────────────────────────────────
+
+  【方案 B】Colab 推理（免费 T4）
+
+  直接运行 colab_lora_train.ipynb Step 6，交互式对话。
+
+  ─────────────────────────────────────────────────────────
+
+  【方案 C】AutoDL 云端推理
+
+  上传 test_lora_batch.py → 修改 BASE_MODEL/LORA_PATH → 运行：
+    python test_lora_batch.py
+  注意：AutoDL 终端输入中文会损坏 Unicode，用批量脚本避免交互式输入。
+
+  ─────────────────────────────────────────────────────────
+
+  ★ System Prompt 策略（核心经验）：
+  ┌─────────────────────────────────────────────────────────┐
+  │ 训练时（数据里）—— 泛用短 prompt                          │
+  │   "你正在微信上与朋友聊天。"                              │
+  │                                                          │
+  │ 推理时（代码里）—— 人格化长 prompt                        │
+  │   "你是阿狸，一个爱撒娇、喜欢黏着喵喵的女生。             │
+  │    你正在和男朋友喵喵微信聊天。回复短小精炼，爱撒娇。"     │
+  │                                                          │
+  │ 原因：                                                    │
+  │  - 长 prompt 在训练数据中重复 4592 次 → 模型死记硬背      │
+  │  - 短 prompt 让模型从对话内容中自然学习风格               │
+  │  - 推理时注入身份 → 且不影响训练质量                      │
+  └─────────────────────────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════
+八、训练结果
+══════════════════════════════════════════════════════════════
+
+  ┌──────┬─────────────────┬──────────┬──────────┬──────────┐
+  │ 版本 │ system prompt   │ 模型     │ Loss     │ 效果     │
+  ├──────┼─────────────────┼──────────┼──────────┼──────────┤
+  │ v1   │ 12 字泛用       │ 3B Colab │ 5.57→3.21│ ✅ 可用  │
+  │ v2   │ 120 字人格化    │ 3B Colab │ 退化     │ ❌ 失败  │
+  │ v3   │ 12 字泛用       │ 7B AutoDL│ 3.39     │ ≈v1     │
+  └──────┴─────────────────┴──────────┴──────────┴──────────┘
+
+  结论：3B 够用，7B 无显著提升。瓶颈在数据质量，不在模型大小。
+
+══════════════════════════════════════════════════════════════
+九、下载 LoRA 权重
+══════════════════════════════════════════════════════════════
+
+  训练完只需下载两个文件（~40MB），不需要整个 output 目录（700MB）：
+    - adapter_model.safetensors  ← LoRA 权重
+    - adapter_config.json        ← LoRA 配置（rank、target_modules 等）
+
+  云端打包命令：
+    cd /root/autodl-tmp/output/chat_style_lora   # AutoDL
+    tar czf lora_weights.tar.gz adapter_model.safetensors adapter_config.json
+    # 然后用 AutoDL 文件管理下载
+
+  或 Colab：
+    直接运行 Step 5，自动打包到 Google Drive
+
+══════════════════════════════════════════════════════════════
+十、常见问题排查
+══════════════════════════════════════════════════════════════
+
+  Q: 训练样本只有 900 条，不是 4592 条？
+  A: LLaMA-Factory v0.9+ 要求 system 后第一条是 human。检查 build_lora_data.py
+     是否有 first_me 过滤逻辑。重新构建数据再上传。
+
+  Q: "Dropped invalid example: []" 大量出现？
+  A: 同上，数据格式不满足 system→human→gpt 顺序。重新跑 build_lora_data.py。
+
+  Q: bitsandbytes 找不到？
+  A: AutoDL 无外网装不了。去掉 --quantization_bit 4，7B LoRA BF16 24GB 刚好。
+
+  Q: HuggingFace 连不上？
+  A: export HF_ENDPOINT=https://hf-mirror.com
+     或用 ModelScope 下载模型到本地路径。
+
+  Q: 模型输出 [sticker:xxx]？
+  A: 原始聊天记录中的表情包占位符，训练数据自带，正常现象。
+
+  Q: 模型分不清自己是谁？
+  A: 训练用的 system prompt 太泛。推理时换人格化 prompt 即可。
+
+  Q: AutoDL 终端输入中文后 tokenizer 崩溃？
+  A: 终端删除字符产生异常空格。用批量测试脚本代替交互式输入。
+
+══════════════════════════════════════════════════════════════
+十一、相关文档索引
+══════════════════════════════════════════════════════════════
+
+  LORA_TRAINING_GUIDE.md   — 训练部署详细指南（Colab + AutoDL）
+  TRAINING_LOG_v1.md       — 训练日志（v1 3B + v3 7B）
+  AutoDL_LINUX_NOTES.md    — Linux/AutoDL 操作笔记 + 踩坑清单
+  galgame/CLAUDE.md        — 项目开发文档和架构说明
+  build_lora_data.py       — 数据管道源码（含注释）
+  colab_lora_train.ipynb   — Colab 训练 Notebook（Step 1-6）
+  test_lora_batch.py       — 批量推理测试脚本
+  项目经历_对话风格迁移.txt — 简历式项目总结
