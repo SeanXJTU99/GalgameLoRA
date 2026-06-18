@@ -12,6 +12,7 @@
 
 # AutoDL（7B 4090D）
 cd /root/LLaMA-Factory
+LLAMAFACTORY_LOGGING_LEVEL=warning
 llamafactory-cli train \
   --model_name_or_path /root/autodl-tmp/models/Qwen2.5-7B-Instruct \
   --dataset chat_style_train \
