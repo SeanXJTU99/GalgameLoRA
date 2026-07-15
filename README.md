@@ -76,7 +76,7 @@ python scripts/build_sharegpt_v2.py
 | `weights/3b/` | v1 3B LoRA 权重 |
 | `weights/7b/` | v3 7B LoRA 权重（rank=8） |
 | `weights/7b_v4/` | v4 7B LoRA 权重（rank=32，最优） |
-| `docs/` | 训练指南、踩坑记录、复现文档 |
+| `docs/` | 训练指南、低显存推理、GGUF 端侧部署、复现文档 |
 
 ## 训练结果
 
@@ -92,3 +92,4 @@ python scripts/build_sharegpt_v2.py
 - **推理用人格化 prompt**：`你是阿狸，一个爱撒娇、喜欢黏着喵喵的女生...`
 - **合并同 sender + 滑动窗口**：保证 human/gpt 交替，每条样本 ≤10 条消息
 - **Merge → 4bit**：合并后量化推理，显存 22G→6G，1080Ti 可跑
+- **GGUF 端侧**：Merge → f16 GGUF → Q4_K_M，~4.7GB，Ollama / 手机 app 可加载（`docs/GGUF端侧部署指南.md`）

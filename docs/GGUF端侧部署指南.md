@@ -18,11 +18,33 @@
 
 全部在 AutoDL 4090D 上完成。
 
+### 0. 环境准备（新实例执行一次）
+
+```bash
+# 0.1 venv 建在数据盘（系统盘仅 30G，pip 全装必炸）
+python -m venv /root/autodl-tmp/venv --system-site-packages
+source /root/autodl-tmp/venv/bin/activate
+
+# 0.2 安装 LLaMA-Factory
+pip install llamafactory -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 0.3 底座模型路径（AutoDL 预装选 Qwen2.5-7B-Instruct 即可跳过 modelscope）
+# ls Qwen2.5/text-generation-webui/models/Qwen2.5-7B-Instruct/
+
+# 0.4 上传 LoRA 权重（本地上传或用 scp）
+# 将 weights/7b_v4/adapter_config.json + adapter_model.safetensors 传到
+# /root/autodl-tmp/output/chat_style_lora_7b_pure/
+```
+
 ### 1. Merge LoRA → fp16 完整模型
 
 ```bash
+# 底座路径以 AutoDL 预装为准，常见位置：
+# - 预装选 Qwen2.5-7B-Instruct → Qwen2.5/text-generation-webui/models/Qwen2.5-7B-Instruct
+# - 手动 modelscope 下载 → /root/autodl-tmp/models/Qwen2.5-7B-Instruct
+
 llamafactory-cli export \
-  --model_name_or_path /root/autodl-tmp/models/Qwen2.5-7B-Instruct \
+  --model_name_or_path Qwen2.5/text-generation-webui/models/Qwen2.5-7B-Instruct \
   --adapter_name_or_path /root/autodl-tmp/output/chat_style_lora_7b_pure \
   --template qwen \
   --export_dir /root/autodl-tmp/output/qwen2.5_7b_merged \
@@ -32,26 +54,19 @@ llamafactory-cli export \
 ### 2. 安装 llama.cpp（Python 绑定 + 工具链）
 
 ```bash
-pip install llama-cpp-python
-
-# 编译量化工具
 cd /root/autodl-tmp
 git clone --depth 1 https://github.com/ggml-org/llama.cpp
 cmake -B llama.cpp/build llama.cpp
-cmake --build llama.cpp/build -t llama-quantize -j
+cmake --build llama.cpp/build -j  # 全编（含 llama-cli + llama-quantize）
 ```
 
 ### 3. 转 f16 GGUF
 
 ```bash
-# 方式 A：llama-cpp-python（推荐，纯 Python）
-python -m llama_cpp.convert \
-  /root/autodl-tmp/output/qwen2.5_7b_merged \
-  --outtype f16 \
-  --outfile /root/autodl-tmp/output/qwen7b_chatstyle_f16.gguf
+# 安装转换依赖（会降级 tokenizers/transformers/torch，与 llamafactory 冲突但无影响）
+pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# 方式 B：llama.cpp 原始脚本
-pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt
+# 转换（约 10-15 分钟）
 python llama.cpp/convert_hf_to_gguf.py \
   /root/autodl-tmp/output/qwen2.5_7b_merged \
   --outfile /root/autodl-tmp/output/qwen7b_chatstyle_f16.gguf \
@@ -78,15 +93,11 @@ python llama.cpp/convert_hf_to_gguf.py \
 ### 5. 验证推理
 
 ```bash
-# 非交互
-llama-cli -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf \
-  -p "你是个爱撒娇的女孩，正在和男朋友聊天\n\nUser: 想你了\nAssistant:" \
-  -n 128 --temp 0.7
+# llama-cli 编译后不在系统 PATH，需用完整路径
+LLAMA_CLI=/root/autodl-tmp/llama.cpp/build/bin/llama-cli
 
 # 交互模式
-llama-cli -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf \
-  --chat-template chatml \
-  -n 256 --temp 0.7
+$LLAMA_CLI -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf --chat-template chatml -n 256 --temp 0.7
 ```
 
 ## 手机端加载
@@ -129,6 +140,59 @@ llama-cli -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf \
 - 更省资源，但效果不及 v4（Loss 3.21 vs 1.06）
 
 或者用 v4 配方在 Qwen2.5-3B-Instruct 上重训 → merge → GGUF（详见 `TRAINING_LOG_v4.md` 超参）。
+
+## 踩坑记录
+
+### 坑 1：系统盘满 (Errno 28 No space left on device)
+
+**现象**：`pip install llamafactory` 报 `OSError: [Errno 28] No space left on device`
+
+**原因**：AutoDL 系统盘 30G，pip cache + 依赖装系统盘直接满。
+
+**解决**：
+```bash
+pip cache purge
+python -m venv /root/autodl-tmp/venv --system-site-packages
+source /root/autodl-tmp/venv/bin/activate
+pip install llamafactory -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+### 坑 2：llama-cli: command not found
+
+**现象**：编译完 `cmake --build llama.cpp/build -t llama-quantize` 后，运行 `llama-cli` 报 command not found。
+
+**原因**：①只编译了 `llama-quantize` 一个 target，没编 `llama-cli`。②即便编了，`llama.cpp/build/bin/` 也不在 `$PATH` 中。
+
+**解决**：
+```bash
+# 全编所有工具
+cmake --build llama.cpp/build -j
+
+# 用完整路径
+/root/autodl-tmp/llama.cpp/build/bin/llama-cli -m ...
+```
+
+### 坑 3：pip 依赖冲突警告（不影响结果）
+
+**现象**：安装 `requirements-convert_hf_to_gguf.txt` 后，`pip check` 报 `llamafactory` 与 `tokenizers`/`transformers` 版本冲突。
+
+**原因**：GGUF 转换脚本需求新版 transformers，会被降级安装。
+
+**结论**：忽略。LLaMA-Factory 已完成 merge，后续不再需要它。GGUF 转换和量化正常执行。
+
+### 坑 4：LoRA 必须两个文件
+
+**现象**：只上传 `adapter_model.safetensors`，merge 报错找不到 adapter 配置。
+
+**解决**：`adapter_config.json` + `adapter_model.safetensors` 两个文件都要传，放在同一目录。
+
+### 坑 5：底座路径不是绝对路径自动查找
+
+**现象**：`--model_name_or_path Qwen2.5-7B-Instruct` 报 model not found。
+
+**原因**：AutoDL 预装的底座不在 huggingface cache，需要指定实例上的实际路径。
+
+**解决**：`--model_name_or_path Qwen2.5/text-generation-webui/models/Qwen2.5-7B-Instruct`（或 `ls` 确认实际位置）。
 
 ## 常见问题
 
