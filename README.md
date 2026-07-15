@@ -47,6 +47,19 @@ llamafactory-cli chat \
 
 详见 `docs/低显存无损推理.md`。
 
+#### 方式 3：GGUF 端侧部署（手机/跨平台）
+
+```bash
+# 1. Merge 同上
+# 2. 转 f16 GGUF
+python -m llama_cpp.convert ./merged --outtype f16 --outfile ./f16.gguf
+# 3. Q4_K_M 量化
+llama-quantize ./f16.gguf ./q4km.gguf Q4_K_M
+# 4. 手机 app（ChatterUI/PocketPal/LLMFarm）加载 q4km.gguf
+```
+
+详见 `docs/GGUF端侧部署指南.md`。
+
 ### 构建数据
 
 ```bash
@@ -57,7 +70,7 @@ python scripts/build_sharegpt_v2.py
 
 | 目录 | 内容 |
 |------|------|
-| `data/` | ShareGPT 训练数据（4,796 train + 1,199 valid） |
+| `data/` | 训练数据（4,796 train + 1,199 valid，隐私数据不公开，需本地构建） |
 | `scripts/` | 数据构建脚本（build_sharegpt_v2.py 当前使用） |
 | `training/` | Colab Notebook + 推理脚本 |
 | `weights/3b/` | v1 3B LoRA 权重 |
