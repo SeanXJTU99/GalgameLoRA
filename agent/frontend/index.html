@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>阿狸</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #ededed; height: 100dvh; display: flex; flex-direction: column; }
+  header { background: #393a3f; color: #fff; padding: 12px; text-align: center;
+           font-size: 16px; flex-shrink: 0; }
+  #chat { flex: 1; overflow-y: auto; padding: 12px; }
+  .row { display: flex; margin-bottom: 10px; }
+  .row.me { justify-content: flex-end; }
+  .bubble { max-width: 72%; padding: 9px 12px; border-radius: 6px; font-size: 15px;
+            line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+  .me .bubble { background: #95ec69; }
+  .her .bubble { background: #fff; }
+  .typing { color: #999; font-size: 13px; padding: 0 12px 6px; display: none; }
+  footer { display: flex; padding: 8px; background: #f7f7f7; gap: 8px; flex-shrink: 0; }
+  #input { flex: 1; border: none; border-radius: 6px; padding: 10px; font-size: 15px;
+           outline: none; }
+  #send { border: none; background: #07c160; color: #fff; border-radius: 6px;
+          padding: 0 18px; font-size: 15px; }
+  #send:disabled { background: #9ed9b8; }
+</style>
+</head>
+<body>
+<header>阿狸</header>
+<div id="chat"></div>
+<div class="typing" id="typing">对方正在输入...</div>
+<footer>
+  <input id="input" placeholder="说点什么..." autocomplete="off">
+  <button id="send">发送</button>
+</footer>
+<script>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+const typing = document.getElementById("typing");
+const history = [];  // 最近对话，随请求发给后端
+
+function addBubble(text, who) {
+  const row = document.createElement("div");
+  row.className = "row " + who;
+  const b = document.createElement("div");
+  b.className = "bubble";
+  b.textContent = text;
+  row.appendChild(b);
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function sendMsg() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  send.disabled = true;
+  addBubble(text, "me");
+  typing.style.display = "block";
+  try {
+    const res = await fetch("/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history: history.slice(-8) }),
+    });
+    const data = await res.json();
+    // 训练数据里多行 = 连发多条，前端按行拆气泡还原微信感
+    for (const line of data.reply.split("\n").filter(l => l.trim()))
+      addBubble(line, "her");
+    history.push({ role: "user", content: text },
+                 { role: "assistant", content: data.reply });
+  } catch (e) {
+    addBubble("（服务掉线了…）", "her");
+  } finally {
+    typing.style.display = "none";
+    send.disabled = false;
+    input.focus();
+  }
+}
+
+send.onclick = sendMsg;
+input.addEventListener("keydown", e => { if (e.key === "Enter") sendMsg(); });
+</script>
+</body>
+</html>

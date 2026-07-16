@@ -1,18 +1,16 @@
 # GalgameLoRA
 
-微信聊天风格 LoRA 微调 — 数据、脚本、权重一站式仓库。
+微信聊天风格 LoRA 微调 → 陪伴 Agent。数据、脚本、权重、方案一站式仓库。
+
+**当前阶段**：v4 风格引擎已完成（loss=1.06），向陪伴 Agent 演进中。
 
 ## 快速开始
 
 ### 训练
 
 ```bash
-# Colab（3B 免费 T4）
-# 上传 data/ 到 Google Drive，运行 training/colab_lora_train.ipynb
-
-# AutoDL（7B 4090D，激进策略）
+# AutoDL（7B 4090D）
 cd /root/LLaMA-Factory
-LLAMAFACTORY_LOGGING_LEVEL=warning
 llamafactory-cli train \
   --model_name_or_path /root/autodl-tmp/models/Qwen2.5-7B-Instruct \
   --dataset chat_style_train \
@@ -29,36 +27,19 @@ llamafactory-cli train \
 ### 推理
 
 ```bash
-# 方式 1：LoRA 直接推理（需 GPU）
-python training/test_lora_batch.py
-
-# 方式 2：Merge + 4bit 量化推理（低显存，1080Ti 可用）
+# 方式 1：LoRA + bitsandbytes 4-bit（1080Ti，已验证）
 llamafactory-cli export \
   --model_name_or_path Qwen/Qwen2.5-7B-Instruct \
   --adapter_name_or_path weights/7b_v4 \
-  --template qwen \
-  --export_dir ./merged
+  --template qwen --export_dir ./merged
+llamafactory-cli chat --model_name_or_path ./merged --template qwen --quantization_bit 4
 
-llamafactory-cli chat \
-  --model_name_or_path ./merged \
-  --template qwen \
-  --quantization_bit 4
+# 方式 2：GGUF Q4_K_M + llama-server（推荐，生产用，1080Ti）
+# 详见 docs/GGUF端侧部署指南.md（合并+量化步骤）
+llama-server -m qwen7b_chatstyle_Q4_K_M.gguf --n-gpu-layers 99
 ```
 
 详见 `docs/低显存无损推理.md`。
-
-#### 方式 3：GGUF 端侧部署（手机/跨平台）
-
-```bash
-# 1. Merge 同上
-# 2. 转 f16 GGUF
-python -m llama_cpp.convert ./merged --outtype f16 --outfile ./f16.gguf
-# 3. Q4_K_M 量化
-llama-quantize ./f16.gguf ./q4km.gguf Q4_K_M
-# 4. 手机 app（ChatterUI/PocketPal/LLMFarm）加载 q4km.gguf
-```
-
-详见 `docs/GGUF端侧部署指南.md`。
 
 ### 构建数据
 
@@ -70,26 +51,32 @@ python scripts/build_sharegpt_v2.py
 
 | 目录 | 内容 |
 |------|------|
-| `data/` | 训练数据（4,796 train + 1,199 valid，隐私数据不公开，需本地构建） |
-| `scripts/` | 数据构建脚本（build_sharegpt_v2.py 当前使用） |
-| `training/` | Colab Notebook + 推理脚本 |
-| `weights/3b/` | v1 3B LoRA 权重 |
-| `weights/7b/` | v3 7B LoRA 权重（rank=8） |
-| `weights/7b_v4/` | v4 7B LoRA 权重（rank=32，最优） |
-| `docs/` | 训练指南、低显存推理、GGUF 端侧部署、复现文档 |
+| `data/` | ShareGPT 训练数据（隐私，需本地构建） |
+| `scripts/` | 数据管道（build_sharegpt_v2.py 当前使用） |
+| `training/` | Colab Notebook + 推理测试脚本 |
+| `weights/3b/` | v1 3B LoRA |
+| `weights/7b/` | v3 7B LoRA（rank=8） |
+| `weights/7b_v4/` | **v4 7B LoRA（rank=32，最优）** |
+| `docs/` | 训练指南、踩坑记录、技术调研、后续方案 |
 
 ## 训练结果
 
-| 版本 | 模型 | rank | lr | epochs | Loss | 数据 | 说明 |
-|------|------|------|-----|--------|------|------|------|
-| v1 | 3B | 8 | 5e-5 | 2 | 3.21 | v1 5.7K | Colab T4, 1h |
-| v3 | 7B | 8 | 5e-5 | 2 | 3.39 | v1 5.7K | AutoDL 4090D, 37min |
-| **v4** | **7B** | **32** | **2e-4** | **4** | **1.06** | **v2 6.0K** | **AutoDL 4090D, 1h17min** |
+| 版本 | 模型 | rank | lr | epochs | Loss | 说明 |
+|------|------|------|-----|--------|------|------|
+| v1 | 3B | 8 | 5e-5 | 2 | 3.21 | Colab T4, 1h |
+| v3 | 7B | 8 | 5e-5 | 2 | 3.39 | AutoDL 4090D, 37min |
+| **v4** | **7B** | **32** | **2e-4** | **4** | **1.06** | **AutoDL 4090D, 1h17min** |
 
 ## 关键策略
 
-- **训练用短身份 prompt**：`你是个爱撒娇的女孩，正在和男朋友聊天`
-- **推理用人格化 prompt**：`你是阿狸，一个爱撒娇、喜欢黏着喵喵的女生...`
-- **合并同 sender + 滑动窗口**：保证 human/gpt 交替，每条样本 ≤10 条消息
-- **Merge → 4bit**：合并后量化推理，显存 22G→6G，1080Ti 可跑
-- **GGUF 端侧**：Merge → f16 GGUF → Q4_K_M，~4.7GB，Ollama / 手机 app 可加载（`docs/GGUF端侧部署指南.md`）
+- **训练用短 prompt，推理用长 prompt**：训练时 `你是个爱撒娇的女孩，正在和男朋友聊天`（18 字），推理时用人格化 prompt
+- **合并同 sender + 滑动窗口**：保证 human/gpt 交替，MAX_CTX=8
+- **异构分发**：认知用 API（GPT-4o-mini），风格用 LoRA 7B（1080Ti GGUF），嵌入用本地小模型（BGE+RoBERTa）
+
+## 后续路线
+
+```
+风格引擎 ✓(v4) → 推理服务化 → 记忆增强 → 情绪关系 → 偏好优化
+```
+
+详见 `docs/后续方案.md`、`docs/技术选型审查.md`、`docs/情感陪伴AI技术路线调研_2025-2026.md`。

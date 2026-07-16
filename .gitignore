@@ -9,3 +9,16 @@ __pycache__/
 .DS_Store
 data/
 *.gguf
+.env
+agent/chroma_db/
+agent/backups/
+agent/models/
+
+# 计划性文档（仅本地）
+docs/后续方案.md
+docs/实践计划.md
+docs/情感陪伴AI技术路线调研_2025-2026.md
+docs/技术选型审查.md
+docs/评估体系改进方案.md
+docs/项目经历_对话风格迁移.txt
+docs/merge_quant_reason.txt
