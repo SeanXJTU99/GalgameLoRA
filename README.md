@@ -57,7 +57,8 @@ python scripts/build_sharegpt_v2.py
 | `weights/3b/` | v1 3B LoRA |
 | `weights/7b/` | v3 7B LoRA（rank=8） |
 | `weights/7b_v4/` | **v4 7B LoRA（rank=32，最优）** |
-| `docs/` | 训练指南、踩坑记录、技术调研、后续方案 |
+| `agent/` | 陪伴 Agent（FastAPI + ChromaDB 记忆 + llama-server） |
+| `docs/` | 训练指南、部署踩坑记录 |
 
 ## 训练结果
 
@@ -71,12 +72,10 @@ python scripts/build_sharegpt_v2.py
 
 - **训练用短 prompt，推理用长 prompt**：训练时 `你是个爱撒娇的女孩，正在和男朋友聊天`（18 字），推理时用人格化 prompt
 - **合并同 sender + 滑动窗口**：保证 human/gpt 交替，MAX_CTX=8
-- **异构分发**：认知用 API（GPT-4o-mini），风格用 LoRA 7B（1080Ti GGUF），嵌入用本地小模型（BGE+RoBERTa）
+- **异构分发**：认知编排用 API（DeepSeek），风格生成用 LoRA 7B（GGUF），记忆检索用本地小模型（BGE）
 
 ## 后续路线
 
 ```
 风格引擎 ✓(v4) → 推理服务化 → 记忆增强 → 情绪关系 → 偏好优化
 ```
-
-详见 `docs/后续方案.md`、`docs/技术选型审查.md`、`docs/情感陪伴AI技术路线调研_2025-2026.md`。
