@@ -72,7 +72,6 @@ python llama.cpp/convert_hf_to_gguf.py ./merged --outtype f16 --outfile f16.gguf
 llama-server -m qwen7b_chatstyle_Q4_K_M.gguf --host 0.0.0.0 --port 6006 --ctx-size 2048
 ```
 
-Full guide: `docs/GGUF端侧部署指南.md`
 
 ### Agent
 
@@ -118,13 +117,13 @@ WeChat sessions (354 JSON)
   → llama-server HTTP API
 ```
 
-## lora训练结果
+## LoRA Training
 
-| 版本 | 模型 | rank | lr | epochs | Loss | 说明 |
-|------|------|------|-----|--------|------|------|
-| v1 | 3B | 8 | 5e-5 | 2 | 3.21 | Colab T4, 1h |
-| v3 | 7B | 8 | 5e-5 | 2 | 3.39 | AutoDL 4090D, 37min |
-| **v4** | **7B** | **32** | **2e-4** | **4** | **1.06** | **AutoDL 4090D, 1h17min** |
+| ver    | baseModel | rank | lr | epochs | Loss | Notes                     |
+|--------|-----------|------|-----|--------|------|---------------------------|
+| v1     | 3B        | 8 | 5e-5 | 2 | 3.21 | Colab T4, 1h              |
+| v3     | 7B        | 8 | 5e-5 | 2 | 3.39 | AutoDL 4090D, 37min       |
+| **v4** | **7B**    | **32** | **2e-4** | **4** | **1.06** | **AutoDL 4090D, 1h17min** |
 
 ## Project Structure
 
@@ -148,11 +147,3 @@ agent/
 docs/             GGUF guide, low-VRAM inference, training logs
 data/             Training data (private, in .gitignore)
 ```
-
-## 关键策略
-
-- **训练用短 prompt，推理用长 prompt**：训练 `你是个爱撒娇的女孩，正在和男朋友聊天`（18 字），推理用人格化 120 字 prompt。v2 验证过长 prompt 导致退化
-- **合并同 sender + 滑动窗口**：保证 human/gpt 严格交替，MAX_CTX=8
-- **LoRA 不跨底座**：7B adapter 只能 merge 7B，shape 不匹配
-- **GGUF 不需要校准数据**：绕过 LLaMA-Factory 导出 bug，用 llama.cpp 直接转
-- **数据隐私**：`data/` 和 `.env` 均 `.gitignore`，不上传 GitHub
