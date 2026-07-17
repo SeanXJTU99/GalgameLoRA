@@ -1,8 +1,10 @@
 # GalgameLoRA
 
-微信聊天风格 LoRA 微调 → 陪伴 Agent。数据、脚本、权重、方案一站式仓库。
+微信聊天风格 LoRA → RLAIF → DPO → 陪伴 Agent。风格引擎 v4（loss=1.06）已完成，Agent 骨架代码就绪，偏好数据管道待执行。
 
-**当前阶段**：v4 风格引擎已完成（loss=1.06），向陪伴 Agent 演进中。
+```
+SFT(v4) ✓ → RLAIF偏好生成 → DPO微调 → 记忆Agent → 情绪关系
+```
 
 ## 快速开始
 
@@ -76,6 +78,4 @@ python scripts/build_sharegpt_v2.py
 
 ## 后续路线
 
-```
-风格引擎 ✓(v4) → 推理服务化 → 记忆增强 → 情绪关系 → 偏好优化
-```
+DPO 偏好数据由 RLAIF 自动构造（`agent/eval/rlaif_generate.py` + `rlaif_judge.py`）。
