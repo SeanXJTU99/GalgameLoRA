@@ -51,13 +51,16 @@ llamafactory-cli export \
   --export_legacy_format False
 ```
 
-### 2. 安装 llama.cpp（Python 绑定 + 工具链）
+### 2. 安装 llama.cpp
 
 ```bash
 cd /root/autodl-tmp
 git clone --depth 1 https://github.com/ggml-org/llama.cpp
+
+# CPU 编译（CUDA 11.8 不兼容最新 llama.cpp，坑 8）
 cmake -B llama.cpp/build llama.cpp
-cmake --build llama.cpp/build -j  # 全编（含 llama-cli + llama-quantize）
+cmake --build llama.cpp/build -j          # 基础工具
+cmake --build llama.cpp/build -t llama-server -j  # 服务端（需显式指定）
 ```
 
 ### 3. 转 f16 GGUF
@@ -90,14 +93,23 @@ python llama.cpp/convert_hf_to_gguf.py \
 | f16 GGUF | ~15 GB | 中间产物，量化后可删 |
 | **Q4_K_M** | **~4.7 GB** | 最终分发文件 |
 
-### 5. 验证推理
+### 5. 部署 + 验证推理
 
 ```bash
-# llama-cli 编译后不在系统 PATH，需用完整路径
-LLAMA_CLI=/root/autodl-tmp/llama.cpp/build/bin/llama-cli
+# 5.1 启动 llama-server（CPU 模式，4090D 实测 ~4 tok/s @ Q4_K_M）
+BIN=/root/autodl-tmp/llama.cpp/build/bin
+$BIN/llama-server -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf \
+  --host 127.0.0.1 --port 8080 \
+  --ctx-size 2048
 
-# 交互模式
-$LLAMA_CLI -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf --chat-template chatml -n 256 --temp 0.7
+# 5.2 云端验证（另开终端）
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"system","content":"你是个爱撒娇的女孩，正在和男朋友聊天"},{"role":"user","content":"想你了"}],"max_tokens":64}'
+
+# 5.3 本地 SSH 隧道（AutoDL 控制台复制 SSH 信息）
+# ssh -CNg -L 8080:127.0.0.1:8080 root@<地址> -p <端口>
+# 之后本地 http://127.0.0.1:8080 即云端服务
 ```
 
 ## 手机端加载
@@ -193,6 +205,46 @@ cmake --build llama.cpp/build -j
 **原因**：AutoDL 预装的底座不在 huggingface cache，需要指定实例上的实际路径。
 
 **解决**：`--model_name_or_path Qwen2.5/text-generation-webui/models/Qwen2.5-7B-Instruct`（或 `ls` 确认实际位置）。
+
+### 坑 6：预装底座占满系统盘（~24GB）
+
+**现象**：系统盘 30G 占 28G（91%），`du` 显示 `/root/Qwen2.5` 占 24G。
+
+**原因**：AutoDL 预装 Qwen2.5-7B 底座时放到了系统盘而非数据盘。
+
+**解决**：merge 完成后底座不再需要，直接删 `rm -rf /root/Qwen2.5` 释放 24G。之后需要时用 modelscope 重新下载到数据盘。
+
+### 坑 7：llama-server 未编译
+
+**现象**：`llama.cpp/build/bin/` 下只有 `llama-cli` 和 `llama-quantize`，没有 `llama-server`。
+
+**原因**：步骤 2 全编只编了基础 target，`llama-server` 需显式指定。
+
+**解决**：`cmake --build /root/autodl-tmp/llama.cpp/build -t llama-server -j`
+
+### 坑 8：CUDA 11.8 编译失败，降回 CPU
+
+**现象**：`cmake -DGGML_CUDA=ON` 编译报 `cudaGridDependencySynchronize` / `cudaTriggerProgrammaticLaunchCompletion` undefined，全量 .cu 文件编译失败。
+
+**原因**：AutoDL 4090D 实例带的 CUDA 11.8（`nvcc --version`），llama.cpp 最新主分支需要 CUDA 12.x API。
+
+**结论**：保持 CPU 模式（`--n-gpu-layers 0`），回复短（~11 token）时 CPU 推理 2.6 秒够用，不值得为省 ~1 秒折腾 CUDA 版本。如果将来需要 GPU：①换 CUDA 12 实例 ②或切 llama.cpp 旧 tag（如 `b4819`，但旧版可能缺 llama-server）。
+
+### 坑 9：OMP_NUM_THREADS 环境变量异常
+
+**现象**：`llama-cli --help` 报 `libgomp: Invalid value for environment variable OMP_NUM_THREADS`。
+
+**原因**：AutoDL 镜像 bashrc 残留了非法的 OpenMP 线程配置。
+
+**解决**：`unset OMP_NUM_THREADS` 再运行。不影响 llama-server 服务。
+
+### 坑 10：curl JSON 换行导致 parse error
+
+**现象**：curl 测试时 `"content":"想你了` 后面带了换行符导致 `json.exception.parse_error: control character U+000A`。
+
+**原因**：多行 curl 命令从文档粘贴时换行被当成 JSON 内容。
+
+**解决**：curl 的 `-d` JSON 必须单行，不能折行粘贴。
 
 ## 常见问题
 
