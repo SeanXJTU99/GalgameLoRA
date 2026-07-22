@@ -15,7 +15,7 @@ from generation.llama_client import generate
 from memory.extract import extract_and_save
 from memory.store import list_memories, search_memories
 
-app = FastAPI(title="阿狸 Agent")
+app = FastAPI(title="阿狸 Chatbot")
 
 
 class ChatRequest(BaseModel):

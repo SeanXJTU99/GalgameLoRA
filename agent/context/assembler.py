@@ -24,7 +24,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-ASSEMBLE_PROMPT = """你是"阿狸"聊天 agent 的对话编排器。根据用户消息、检索到的记忆和情绪信号，
+ASSEMBLE_PROMPT = """你是"阿狸"聊天机器人的对话编排器。根据用户消息、检索到的记忆和情绪信号，
 组装给风格模型的生成上下文。只输出 JSON，不要任何其他内容。
 
 用户消息：{user_msg}

@@ -1,6 +1,6 @@
-# 阿狸 Agent
+# 阿狸 Chatbot
 
-记忆增强陪伴 Agent（P2 骨架）— 编排层（DeepSeek）+ 记忆层（ChromaDB + BGE）+ 风格层（v4 LoRA GGUF + llama-server）。
+记忆增强型风格聊天机器人（P2）— 编排层（DeepSeek）+ 记忆层（ChromaDB + BGE）+ 风格层（v4 LoRA GGUF + llama-server）。
 
 ## 快速启动
 
@@ -15,7 +15,7 @@ llama-server -m models/qwen7b_chatstyle_Q4_K_M.gguf --port 8080 --n-gpu-layers 0
 export LLM_API_KEY=sk-xxx           # DeepSeek key
 export LLAMA_SERVER_URL=http://127.0.0.1:8080
 
-# 4. 启动 agent
+# 4. 启动
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 

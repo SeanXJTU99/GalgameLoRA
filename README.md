@@ -1,12 +1,12 @@
-# GalgameLoRA — WeChat Chat-Style Companion Agent
+# GalgameLoRA — WeChat Chat-Style Companion Chatbot
 
-LoRA fine-tuned Qwen2.5-7B that mimics a girlfriend's chat style (pet names, stickers, stickers), plus a memory-augmented FastAPI agent. Trained on 354 real WeChat sessions (~4,800 samples), deployed as GGUF Q4_K_M on AutoDL on-demand GPU.
+LoRA fine-tuned Qwen2.5-7B that mimics a girlfriend's chat style, plus memory-augmented retrieval. Trained on 354 real WeChat sessions (~4,800 samples), deployed as GGUF Q4_K_M on AutoDL on-demand GPU.
 
 ## Features
 
 - **LoRA Style Engine (loss 1.06)**: Rank-32 LoRA on Qwen2.5-7B-Instruct, training-only short system prompt (18 chars) to avoid signal dilution
 - **RLAIF → DPO Pipeline**: AI-judge generated preference pairs for RL-free alignment improvement
-- **Memory-Augmented Agent**: ChromaDB + bge-small-zh-v1.5 retrieval with lazy-decay importance scoring
+- **Memory-Augmented Retrieval**: ChromaDB + bge-small-zh-v1.5 with lazy-decay importance scoring
 - **Dual-Route Context Assembly**: Rich (LLM-composed ≤200 chars) vs Minimal (persona + ≤30 chars) — config switch, not branch
 - **Three-Backend Emotion Detection**: Rule-based (default), RoBERTa (lazy load), or LLM (side-output from orchestrator)
 - **GGUF Q4_K_M Deployment**: Static 4-bit quantization, llama-server HTTP API, fits 8GB GPU VRAM
@@ -15,7 +15,7 @@ LoRA fine-tuned Qwen2.5-7B that mimics a girlfriend's chat style (pet names, sti
 
 ```
 ┌──────────────────────────┐
-│  FastAPI Agent (local)   │  ← ChromaDB + BGE (24MB free)
+│  FastAPI Server (local)  │  ← ChromaDB + BGE (24MB free)
 │  POST /chat              │
 ├──────────────────────────┤
 │  Orchestrator (DeepSeek) │  ← Memory extraction + context assembly (~¥0.001/round)
@@ -32,7 +32,7 @@ LoRA fine-tuned Qwen2.5-7B that mimics a girlfriend's chat style (pet names, sti
 | Training GPU | AutoDL 4090D | ¥1.68/h, ~1.3h/train |
 | Inference GPU | AutoDL 4090D on-demand | ~¥30-60/month |
 | Orchestrator LLM | DeepSeek-chat | ~¥0.001/round |
-| Local CPU/RAM | i7 / 8GB | Runs Agent + ChromaDB + BGE |
+| Local CPU/RAM | i7 / 8GB | Runs FastAPI + ChromaDB + BGE |
 | GGUF model | Q4_K_M | 4.7GB (local download) |
 
 ## Quick Start
@@ -73,7 +73,7 @@ llama-server -m qwen7b_chatstyle_Q4_K_M.gguf --host 0.0.0.0 --port 6006 --ctx-si
 ```
 
 
-### Agent
+### Chatbot
 
 ```bash
 # Install
