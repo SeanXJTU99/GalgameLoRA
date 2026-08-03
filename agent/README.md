@@ -9,7 +9,8 @@
 pip install -r requirements.txt
 
 # 2. 启动风格层（本地 CPU 模式示例；GPU 改 --n-gpu-layers 99）
-llama-server -m models/qwen7b_chatstyle_Q4_K_M.gguf --port 8080 --n-gpu-layers 0
+llama-server -m models/qwen7b_chatstyle_Q4_K_M.gguf --port 8080 \
+  --n-gpu-layers 0 --ctx-size 2048 --cache-type-k q8_0 --cache-type-v q8_0
 
 # 3. 配置（或写 .env）
 export LLM_API_KEY=sk-xxx           # DeepSeek key

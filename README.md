@@ -69,7 +69,8 @@ python llama.cpp/convert_hf_to_gguf.py ./merged --outtype f16 --outfile f16.gguf
 ./llama-quantize f16.gguf qwen7b_chatstyle_Q4_K_M.gguf Q4_K_M
 
 # 4. Serve (AutoDL)
-llama-server -m qwen7b_chatstyle_Q4_K_M.gguf --host 0.0.0.0 --port 6006 --ctx-size 2048
+llama-server -m qwen7b_chatstyle_Q4_K_M.gguf --host 0.0.0.0 --port 6006 \
+  --ctx-size 2048 --cache-type-k q8_0 --cache-type-v q8_0
 ```
 
 

@@ -100,7 +100,7 @@ python llama.cpp/convert_hf_to_gguf.py \
 BIN=/root/autodl-tmp/llama.cpp/build/bin
 $BIN/llama-server -m /root/autodl-tmp/output/qwen7b_chatstyle_Q4_K_M.gguf \
   --host 127.0.0.1 --port 8080 \
-  --ctx-size 2048
+  --ctx-size 2048 --cache-type-k q8_0 --cache-type-v q8_0
 
 # 5.2 云端验证（另开终端）
 curl http://127.0.0.1:8080/v1/chat/completions \
